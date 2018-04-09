@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Trip Extractor!</title>
+    <link rel="stylesheet" href="/static/css/bulma.min.css">
+    <script defer src="https://use.fontawesome.com/releases/v5.0.6/js/all.js"></script>
+</head>
+
+<body>
+    <section class="hero is-light">
+        <div class="hero-body">
+            <div class="container">
+                <h1 class="title">
+                    Trip Extractor
+                </h1>
+            </div>
+        </div>
+    </section>
+<section class="section">
+<div class="container">
+    <div class="tile is-ancestor">
+        <div class="tile is-4 is-vertical is-parent">
+            <div class="tile is-child notification is-warning">
+                <p class="title">Input: stops</p>
+                {% if stops > 0 %}
+                    <p>There is {{ stops }} stops.</p>
+                {% elif stops == 0 %}
+                    <p>There is no stop yet.</p>
+                {% else %}
+                    <p>There is a problem: {{ stops }}.</p>
+                {% endif %}
+            </div>
+            <div class="tile is-child notification is-primary">
+                <p class="title">Input: traces</p>
+                {% if traces > 0 %}
+                <p>There is {{ traces }} traces.</p>
+                {% elif traces == 0 %}
+                <p>There is no trace yet.</p>
+                {% else %}
+                <p>There is a problem: {{ traces }}.</p>
+                {% endif %}
+            </div>
+        </div>
+        <div class="tile is-parent">
+            <div class="tile is-child box">
+                <p class="title">Output</p>
+                <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Etiam semper diam at erat pulvinar, at pulvinar felis
+                    blandit. Vestibulum volutpat tellus diam, consequat gravida libero rhoncus ut. Morbi maximus, leo sit amet
+                    vehicula eleifend, nunc dui porta orci, quis semper odio felis ut quam.</p>
+            </div>
+        </div>
+    </div>
+</div>
+</section>
+
+</body>
+
+</html>
