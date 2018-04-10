@@ -10,15 +10,15 @@
 </head>
 
 <body>
-    <section class="hero is-light">
-        <div class="hero-body">
-            <div class="container">
-                <h1 class="title">
-                    Trip Extractor
-                </h1>
-            </div>
+<section class="hero is-light">
+    <div class="hero-body">
+        <div class="container">
+            <h1 class="title">
+                Trip Extractor
+            </h1>
         </div>
-    </section>
+    </div>
+</section>
 <section class="section">
 <div class="container">
     <div class="tile is-ancestor">
@@ -26,7 +26,7 @@
             <div class="tile is-child notification is-warning">
                 <p class="title">Input: stops</p>
                 {% if stops > 0 %}
-                    <p>There is {{ stops }} stops.</p>
+                <p>There is {{ stops }} stops.</p>
                 {% elif stops == 0 %}
                     <p>There is no stop yet.</p>
                 {% else %}
@@ -55,6 +55,18 @@
     </div>
 </div>
 </section>
+
+{% if traces > 0 or stops > 0 %}
+<section class="section">
+    <div class="container">
+        <div class="notification is-danger">
+        <form method="POST" action="/input/reset">
+            <input type="submit" value="reset all data" />
+        </form>
+        </div>
+    </div>
+</section>
+{% endif %}
 
 </body>
 

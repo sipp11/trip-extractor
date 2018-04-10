@@ -8,10 +8,14 @@ It's a tool to process GPS traces and give back a trip summary.
 
 # How to get it works
 
-set env
+Create config file as `my.ini` with content below
 
-    TPEX_PSQL="postgres://user:password@localhost/trip_extractor?sslmode=disable"
 
+    [app]
+    port = 9090
+
+    [db]
+    path = postgres://user:password@localhost/table_name?sslmode=disable
 
 
 # Input
@@ -22,8 +26,8 @@ Planned to have input via REST interface
     fields:
         stop_id     string
         stop_name   string
-        stop_lat    string
-        stop_lon    string
+        stop_lat    float32
+        stop_lon    float32
         is_terminal bool
     2 terminals required to find a trip
 
