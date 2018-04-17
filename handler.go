@@ -14,24 +14,8 @@ import (
 type (
 	// Handler to handle all route
 	Handler struct {
-		db *sql.DB
-	}
-	// Stop is to store all info about stop we need
-	// to know to create trip
-	Stop struct {
-		StopID     string  `json:"stop_id" validate:"required"`
-		StopName   string  `json:"stop_name"`
-		StopLat    float32 `json:"stop_lat" validate:"required"`
-		StopLon    float32 `json:"stop_lon" validate:"required"`
-		IsTerminal bool    `json:"is_terminal"`
-	}
-
-	// Trace is to keep all GPS data
-	Trace struct {
-		BoxID     string  `json:"box_id" validate:"required"`
-		Timestamp string  `json:"timestamp" validate:"required"`
-		Lat       float32 `json:"lat" validate:"required"`
-		Lon       float32 `json:"lon" validate:"required"`
+		db   *sql.DB
+		port string
 	}
 
 	// Result for all input handlers
@@ -60,7 +44,7 @@ func (h *Handler) StopInputHandler(c echo.Context) (err error) {
 		} else {
 			result.Success++
 			// insert
-			_, err := h.db.Exec(fmt.Sprintf("INSERT INTO stops (stop_id, stop_name, stop_lat, stop_lon, is_terminal) VALUES ('%s', '%s', %f, %f, %v)", ele.StopID, ele.StopName, ele.StopLat, ele.StopLon, ele.IsTerminal))
+			_, err := h.db.Exec(fmt.Sprintf("INSERT INTO stops (stop_id, stop_name, stop_lat, stop_lon, is_terminal, sequence) VALUES ('%s', '%s', %f, %f, %v, %d)", ele.ID, ele.Name, ele.Lat, ele.Lon, ele.IsTerminal, ele.Sequence))
 			if err, ok := err.(*pq.Error); ok {
 				// Here err is of type *pq.Error, you may inspect all its fields, e.g.:
 				fmt.Println("pq error:", err.Code.Name())
@@ -107,37 +91,8 @@ func (h *Handler) TraceInputHandler(c echo.Context) error {
 // IndexHandler is the front page to check everything
 func (h *Handler) IndexHandler(c echo.Context) error {
 	var indexTmpl = pongo2.Must(pongo2.FromFile("html/index.html"))
-	stopCnt := 0
-	traceCnt := 0
-	var count int
-	err := h.db.QueryRow("SELECT COUNT(*) FROM stops").Scan(&count)
-	if err, ok := err.(*pq.Error); ok {
-		if err.Code.Name() == "undefined_table" {
-			// it is not yet created
-			if err := h.createStopTable(); err != nil {
-				fmt.Println(err)
-			}
-			stopCnt = -10
-		} else {
-			stopCnt = -1
-		}
-	} else {
-		stopCnt = count
-	}
-	err = h.db.QueryRow("SELECT COUNT(*) FROM traces").Scan(&count)
-	if err, ok := err.(*pq.Error); ok {
-		if err.Code.Name() == "undefined_table" {
-			// it is not yet created
-			if err := h.createTraceTable(); err != nil {
-				fmt.Println(err)
-			}
-			traceCnt = -10
-		} else {
-			traceCnt = -1
-		}
-	} else {
-		traceCnt = count
-	}
+	stopCnt, _ := h.ItemCount("stops")
+	traceCnt, _ := h.ItemCount("traces")
 	out, err := indexTmpl.Execute(pongo2.Context{"stops": stopCnt, "traces": traceCnt})
 	if err != nil {
 		return err
@@ -162,11 +117,13 @@ func (h *Handler) truncateStopAndTrace() error {
 func (h *Handler) createStopTable() error {
 	sq := `CREATE TABLE stops (
 		stop_id char(150),
+		sequence int,
 		stop_name char(250),
 		stop_lat numeric,
 		stop_lon numeric,
-		is_terminal bool)
-		`
+		is_terminal bool,
+		UNIQUE(stop_id)
+		)`
 	_, err := h.db.Exec(sq)
 	return err
 }
@@ -176,8 +133,9 @@ func (h *Handler) createTraceTable() error {
 		box_id char(150),
 		timestamp timestamp,
 		lat	numeric,
-		lon numeric)
-		`
+		lon numeric
+		UNIQUE(box_id, timestamp)
+		)`
 	_, err := h.db.Exec(cq)
 	return err
 }
