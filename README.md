@@ -13,6 +13,7 @@ Create config file as `my.ini` with content below
 
     [app]
     port = 9090
+    range_km_within_stop = 0.025
 
     [db]
     path = postgres://user:password@localhost/table_name?sslmode=disable

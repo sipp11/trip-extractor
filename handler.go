@@ -14,8 +14,9 @@ import (
 type (
 	// Handler to handle all route
 	Handler struct {
-		db   *sql.DB
-		port string
+		db              *sql.DB
+		port            string
+		rangeWithinStop float64
 	}
 
 	// Result for all input handlers
@@ -133,7 +134,7 @@ func (h *Handler) createTraceTable() error {
 		box_id char(150),
 		timestamp timestamp,
 		lat	numeric,
-		lon numeric
+		lon numeric,
 		UNIQUE(box_id, timestamp)
 		)`
 	_, err := h.db.Exec(cq)

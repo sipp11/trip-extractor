@@ -2,25 +2,35 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/kellydunn/golang-geo"
+
+	_ "github.com/lib/pq"
 )
 
+// Trip stores concise trip information in order to find stop_times
 type Trip struct {
-	Start string
-	End   string
-	BoxID string
+	ID      string
+	Start   string
+	End     string
+	BoxID   string
+	BeginAt Stop
+	EndAt   Stop
+	Comment string
 }
 
+// StopTime is to keep all schedules
 type StopTime struct {
 	TripID    string
 	StopID    string
 	Arrival   string
 	Departure string
 	BoxID     string
-	sequence  int
+	Sequence  int
 }
 
 func (h *Handler) getStops(where string, order string) []Stop {
@@ -32,7 +42,7 @@ func (h *Handler) getStops(where string, order string) []Stop {
 	}
 	for rows.Next() {
 		var stop Stop
-		rows.Scan(&stop.ID, &stop.Name, &stop.Lat, &stop.Lon, &stop.Sequence, &stop.IsTerminal)
+		rows.Scan(&stop.ID, &stop.Sequence, &stop.Name, &stop.Lat, &stop.Lon, &stop.IsTerminal)
 		stops = append(stops, stop)
 	}
 	return stops
@@ -42,85 +52,246 @@ func (h *Handler) getStops(where string, order string) []Stop {
 func (h *Handler) TripExtractor() []StopTime {
 	fmt.Printf("start Trip Extractor\n")
 	stops := h.getStops("", "ASC")
-	terminals := h.getStops("is_terminal=true", "ASC")
-	fmt.Printf(" #stop %d  #terminal %d", len(stops), len(terminals))
-	// traces := h.getTraces()
+	terminals := h.getStops("is_terminal=TRUE", "ASC")
+	fmt.Printf("#stop %d  #terminal %d\n", len(stops), len(terminals))
 	trips := h.FindTripStartEnd(terminals)
 
-	for _, ele := range trips {
-		fmt.Printf(" >> trip: [%s] %+v - %+v \n", strings.TrimSpace(ele.BoxID), ele.Start, ele.End)
+	fmt.Println("Trip Summery")
+	for ind, ele := range trips {
+		order := ind + 1
+
+		tt2, _ := time.Parse("2006-01-02T15:04:05Z", ele.End)
+		tt1, _ := time.Parse("2006-01-02T15:04:05Z", ele.Start)
+		tripDuration := tt2.Sub(tt1)
+
+		fmt.Printf("%d.`%s`[%s] (%s..%s) %+v - %+v => %0.1f Min \n",
+			order, ele.ID, strings.TrimSpace(ele.BoxID),
+			strings.TrimSpace(ele.BeginAt.ID), strings.TrimSpace(ele.EndAt.ID),
+			ele.Start, ele.End, tripDuration.Minutes())
+		if len(ele.Comment) > 0 {
+			fmt.Printf("    :: %s\n", ele.Comment)
+		}
+		if len(ele.Comment) == 0 {
+			stopTimeTable := h.FindTripTimetable(ele, stops)
+			for ind2, stEle := range stopTimeTable {
+				order := ind2 + 1
+				t2, _ := time.Parse("2006-01-02T15:04:05Z", stEle.Departure)
+				t1, _ := time.Parse("2006-01-02T15:04:05Z", stEle.Arrival)
+				duration := t2.Sub(t1)
+				fmt.Printf("   %d [%s] %+v -> %0.0f s \n", order,
+					strings.TrimSpace(stEle.StopID),
+					stEle.Arrival,
+					duration.Seconds())
+			}
+		}
 	}
 	return nil
 }
 
 // FindTripStartEnd to get array of trips from all traces
 func (h *Handler) FindTripStartEnd(terminals []Stop) []Trip {
-	var trips []Trip
-	first := terminals[0]
-	second := terminals[1]
-	t1 := geo.NewPoint(float64(first.Lat), float64(first.Lon))
-	t2 := geo.NewPoint(float64(second.Lat), float64(second.Lon))
-	fmt.Printf("t1: %+v\n", t1)
-	fmt.Printf("t2: %+v\n", t2)
-
 	rows, err := h.queryTraces("", "")
 	if err != nil {
-		fmt.Printf("queryTraces err: %+v", err)
-		os.Exit(1)
+		log.Fatal("queryTraces err:", err)
 	}
-	var trip Trip
-	var trace Trace
-	closestT1 := 1.10
-	closestT2 := 1.10
+	var (
+		trips         []Trip
+		boxID         string
+		trip          Trip
+		trace         Trace
+		firstTerminal Stop
+	)
+	isAtTerminalInd := -1
+
 	for rows.Next() {
-		var lat float32
-		var lon float32
-		rows.Scan(&trace.BoxID, &trace.Timestamp, &lat, &lon)
-		// fmt.Printf(" trace (%f, %f)   <-->  (%f, %f)\n", trace.Lat, trace.Lon, lat, lon)
-		if trace.Lat == lat && trace.Lon == lon {
-			// skip processing idling one
-			continue
-		}
-		trace.Lat = lat
-		trace.Lon = lon
-		// fmt.Printf("trace: %+v\n", trace)
-		pnt := geo.NewPoint(float64(trace.Lat), float64(trace.Lon))
-		// result in km
-		distT1 := pnt.GreatCircleDistance(t1)
-		distT2 := pnt.GreatCircleDistance(t2)
-		if distT1 < closestT1 {
-			closestT1 = distT1
-		}
-		if distT2 < closestT2 {
-			closestT2 = distT2
-		}
-		if distT1 < 0.02 || distT2 < 0.02 {
-			fmt.Printf("tmsp: %+v   distance: <t1> %0.05f <t2> %0.05f \n", trace.Timestamp, distT1, distT2)
-		}
-		if distT2 < 0.4 && trip.BoxID == "" {
-			continue
-		}
-		if trip.BoxID == "" {
-			trip.BoxID = trace.BoxID
-		} else if trip.BoxID != trace.BoxID {
-			trip.End = "-"
-			trips = append(trips, trip)
-			trip = Trip{BoxID: trace.BoxID}
-		}
-		if trip.Start == "" && distT1 < 0.4 {
-			trip.Start = trace.Timestamp
-		}
-		if distT2 < 0.4 {
-			trip.End = trace.Timestamp
-			trips = append(trips, trip)
+		rows.Scan(&trace.BoxID, &trace.Timestamp, &trace.Lat, &trace.Lon)
+		pnt := geo.NewPoint(trace.Lat, trace.Lon)
+		// if box changes -> end the old one
+		if boxID != "" && boxID != trace.BoxID {
 			trip = Trip{}
+			boxID = ""
+		}
+		if boxID == "" {
+			boxID = trace.BoxID
+		}
+		// result in km
+		terminalsDistance := make([]float64, len(terminals))
+		for ind, ele := range terminals {
+			tGeoPoint := geo.NewPoint(ele.Lat, ele.Lon)
+			terminalsDistance[ind] = pnt.GreatCircleDistance(tGeoPoint)
+		}
+		// init trip
+		if firstTerminal == (Stop{}) {
+			gotFirst := false
+			for ind, dist := range terminalsDistance {
+				if dist < h.rangeWithinStop {
+					firstTerminal = terminals[ind]
+					gotFirst = true
+					isAtTerminalInd = ind
+					break
+				}
+			}
+			if gotFirst == false {
+				// if we haven't found the first terminal,
+				// prior to this data is no good anyway
+				continue
+			}
+			// init trip
+			trip.BeginAt = terminals[isAtTerminalInd]
+			trip.Start = trace.Timestamp
+			trip.BoxID = trace.BoxID
+		}
+		// skip anything if is at the same terminal
+		if isAtTerminalInd != -1 {
+			// check if it's at the same terminal? then continue
+			if terminalsDistance[isAtTerminalInd] < h.rangeWithinStop {
+				// trip start when it departs the terminal,
+				// not when it first arrives
+				trip.Start = trace.Timestamp
+				continue
+			} else {
+				isAtTerminalInd = -1
+			}
+		}
+		for ind, dist := range terminalsDistance {
+			if dist < h.rangeWithinStop {
+				// this is what it shouldn't be... maybe GPS sucks
+				if isAtTerminalInd != -1 {
+					trip.Comment = "[GPSSucks] jumping from terminal to terminal, huh?"
+				} else if terminals[ind] == trip.BeginAt {
+					trip.Comment = "[IncompletedTrip] round trip w/o hitting another terminal"
+				}
+				trip.End = trace.Timestamp
+				trip.EndAt = terminals[ind]
+				trip.ID = RandString(6)
+				trips = append(trips, trip)
+				trip = Trip{}
+				isAtTerminalInd = -1
+				firstTerminal = Stop{}
+			}
 		}
 	}
-	fmt.Printf("closest t1: %+v   t2: %+v", closestT1, closestT2)
 	return trips
 }
 
 // FindTripTimetable to get detail of trip and stop along the way
-func (h *Handler) FindTripTimetable(trip Trip) []StopTime {
-	return nil
+// and interpolate if there is no data stopping at the stop
+func (h *Handler) FindTripTimetable(trip Trip, stops []Stop) []StopTime {
+	q := fmt.Sprintf("timestamp >= '%s' AND timestamp <= '%s'", trip.Start, trip.End)
+	// fmt.Println(q)
+	rows, err := h.queryTraces(q, "ASC")
+	if err != nil {
+		log.Fatal(err)
+	}
+	var (
+		trace    Trace
+		boxID    string
+		stopTime StopTime
+	)
+	results := make([]StopTime, len(stops))
+	for rows.Next() {
+		rows.Scan(&trace.BoxID, &trace.Timestamp, &trace.Lat, &trace.Lon)
+		pnt := geo.NewPoint(trace.Lat, trace.Lon)
+		// if box changes -> end the old one (or save prev if applicant)
+		if boxID != "" && boxID != trace.BoxID && stopTime != (StopTime{}) {
+			results[stopTime.Sequence] = stopTime
+			stopTime = StopTime{}
+		}
+		if boxID == "" {
+			boxID = trace.BoxID
+		}
+
+		atTheStop := -1
+		for ind, ele := range stops {
+			tGeoPoint := geo.NewPoint(ele.Lat, ele.Lon)
+			distance := pnt.GreatCircleDistance(tGeoPoint)
+			if distance < h.rangeWithinStop {
+				atTheStop = ind
+				if stopTime == (StopTime{}) {
+					// init stopTime
+					stopTime.BoxID = trace.BoxID
+					stopTime.TripID = trip.ID
+					stopTime.Arrival = trace.Timestamp
+					stopTime.Departure = trace.Timestamp
+					stopTime.StopID = ele.ID
+					stopTime.Sequence = ind
+				} else {
+					// check if it's still at the same stop
+					//   or close the prev one and start the new one
+					if stopTime.StopID == ele.ID {
+						stopTime.Departure = trace.Timestamp
+						continue
+					} else {
+						// close the old one & init the one one
+						results[stopTime.Sequence] = stopTime
+						stopTime = StopTime{
+							BoxID:     trace.BoxID,
+							TripID:    trip.ID,
+							Arrival:   trace.Timestamp,
+							Departure: trace.Timestamp,
+							StopID:    ele.ID,
+							Sequence:  ind,
+						}
+					}
+
+				}
+			}
+		}
+		if atTheStop == -1 {
+			// mean it's not at any stop
+			if stopTime != (StopTime{}) {
+				// close it
+				results[stopTime.Sequence] = stopTime
+				stopTime = StopTime{}
+			}
+		}
+	}
+	if results[stopTime.Sequence] == (StopTime{}) {
+		results[stopTime.Sequence] = stopTime
+	}
+	results = FillupMissingStopTime(results, stops)
+	return results
+}
+
+// FillupMissingStopTime by interpolating
+func FillupMissingStopTime(l []StopTime, stops []Stop) []StopTime {
+	for ind, ele := range l {
+		if ele != (StopTime{}) {
+			continue
+		}
+		fmt.Printf("[%s] This stop needs attention.\n", strings.TrimSpace(stops[ind].ID))
+		// no way we can miss first and last since we won't have a Trip to begin with
+		if ind == 0 || ind == len(l) {
+			continue
+		}
+		// NOTE: this doesn't handle anything but missing just one StopTime
+		l[ind] = simpleInterpolation(l[ind-1], l[ind+1], stops, ind)
+	}
+	return l
+}
+
+// Linear StopTime interpolation, simple and effective
+func simpleInterpolation(before StopTime, after StopTime, stops []Stop, targetInd int) StopTime {
+	result := StopTime{
+		TripID:   before.TripID,
+		StopID:   stops[targetInd].ID,
+		BoxID:    before.BoxID,
+		Sequence: before.Sequence + 1,
+	}
+	t2, _ := time.Parse("2006-01-02T15:04:05Z", after.Arrival)
+	t1, _ := time.Parse("2006-01-02T15:04:05Z", before.Departure)
+	overlapPeriod := t2.Sub(t1)
+	pnt2 := geo.NewPoint(stops[targetInd+1].Lat, stops[targetInd+1].Lon)
+	pnt1 := geo.NewPoint(stops[targetInd-1].Lat, stops[targetInd-1].Lon)
+	pntTarget := geo.NewPoint(stops[targetInd].Lat, stops[targetInd].Lon)
+
+	targetToNext := pntTarget.GreatCircleDistance(pnt2)
+	prevToTarget := pnt1.GreatCircleDistance(pntTarget)
+
+	targetPeriod := prevToTarget / (prevToTarget + targetToNext) * overlapPeriod.Seconds()
+
+	targetArrivalTime := t1.Add(time.Duration(targetPeriod) * time.Second)
+	result.Arrival = targetArrivalTime.Format(time.RFC3339)
+	result.Departure = result.Arrival
+	return result
 }

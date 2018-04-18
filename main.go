@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"os"
 	"time"
 
@@ -43,11 +44,11 @@ func (h *Handler) serveWebInterface() {
 func (h *Handler) checkDataCompleteness() bool {
 	stopCnt, _ := h.ItemCount("stops")
 	traceCnt, _ := h.ItemCount("traces")
-	if stopCnt < 10 {
+	if stopCnt < 6 {
 		fmt.Printf("#stops = %d\n > which is NOT enough to do anything meaningful\n", stopCnt)
 		return false
 	}
-	if traceCnt < 100 {
+	if traceCnt < 60 {
 		fmt.Printf("#traces = %d\n > which is NOT enough to do anything meaningful\n", traceCnt)
 		return false
 	}
@@ -57,17 +58,21 @@ func (h *Handler) checkDataCompleteness() bool {
 func main() {
 	cfg, err := ini.Load("my.ini")
 	if err != nil {
-		fmt.Printf("Fail to read my.ini: %v", err)
-		os.Exit(1)
+		log.Fatal("Fail to read my.ini: %v", err)
 	}
 	port := cfg.Section("app").Key("port").String()
 	dbConn := cfg.Section("db").Key("path").String()
-	db, err := sql.Open("postgres", dbConn)
+	rangeWithinStop, err := cfg.Section("app").Key("range_km_within_stop").Float64()
 	if err != nil {
-		fmt.Printf("Fail to connect to db server: %v", err)
-		os.Exit(1)
+		log.Fatal("range_km_within_stop cannot be casted to float64")
 	}
-	h := &Handler{db: db, port: port}
+	db, err := sql.Open("postgres", dbConn)
+	defer db.Close()
+
+	if err != nil {
+		log.Fatal("Fail to connect to db server: %v", err)
+	}
+	h := &Handler{db: db, port: port, rangeWithinStop: rangeWithinStop}
 
 	args := os.Args[1:]
 	if len(args) > 0 && args[0] == "web" {

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/lib/pq"
+	pq "github.com/lib/pq"
 )
 
 type (
@@ -14,8 +14,8 @@ type (
 	Stop struct {
 		ID         string  `json:"stop_id" validate:"required"`
 		Name       string  `json:"stop_name"`
-		Lat        float32 `json:"stop_lat" validate:"required"`
-		Lon        float32 `json:"stop_lon" validate:"required"`
+		Lat        float64 `json:"stop_lat" validate:"required"`
+		Lon        float64 `json:"stop_lon" validate:"required"`
 		Sequence   int     `json:"sequence" validate:"gte=0"`
 		IsTerminal bool    `json:"is_terminal"`
 	}
@@ -24,8 +24,8 @@ type (
 	Trace struct {
 		BoxID     string  `json:"box_id" db:"box_id" validate:"required"`
 		Timestamp string  `json:"timestamp" db:"timestamp" validate:"required"`
-		Lat       float32 `json:"lat" db:"lat" validate:"required"`
-		Lon       float32 `json:"lon" db:"lon" validate:"required"`
+		Lat       float64 `json:"lat" db:"lat" validate:"required"`
+		Lon       float64 `json:"lon" db:"lon" validate:"required"`
 	}
 )
 
@@ -63,15 +63,15 @@ func (h *Handler) queryStops(where string, order string) (rows *sql.Rows, err er
 	if len(where) > 0 && strings.Index(where, "WHERE") == -1 {
 		where = fmt.Sprintf("WHERE %s", where)
 	}
-	fieldOrder := "stop_id,stop_name,stop_lat,stop_lon,sequence,is_terminal"
+	fieldOrder := `stop_id,sequence,'stop_name',stop_lat,stop_lon,is_terminal`
 	query := fmt.Sprintf(`SELECT %s FROM stops %s ORDER BY sequence %s`, fieldOrder, where, order)
 	return h.db.Query(query)
 }
 
 // queryTraces return stops in order mannerly
 func (h *Handler) queryTraces(where string, order string) (rows *sql.Rows, err error) {
-	if order != "ASC" {
-		order = "DESC"
+	if order != "DESC" {
+		order = "ASC"
 	}
 	if len(where) > 0 && strings.Index(where, "WHERE") == -1 {
 		where = fmt.Sprintf("WHERE %s", where)
