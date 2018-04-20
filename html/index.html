@@ -7,6 +7,15 @@
     <title>Trip Extractor!</title>
     <link rel="stylesheet" href="/static/css/bulma.min.css">
     <script defer src="https://use.fontawesome.com/releases/v5.0.6/js/all.js"></script>
+    <style>
+    .timetable {
+        font-size: 11px;
+        background: ghostwhite;
+        padding: 4px;
+        margin: 2px;
+        text-align: center;
+    }
+    </style>
 </head>
 
 <body>
@@ -47,9 +56,29 @@
         <div class="tile is-parent">
             <div class="tile is-child box">
                 <p class="title">Output</p>
-                <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Etiam semper diam at erat pulvinar, at pulvinar felis
-                    blandit. Vestibulum volutpat tellus diam, consequat gravida libero rhoncus ut. Morbi maximus, leo sit amet
-                    vehicula eleifend, nunc dui porta orci, quis semper odio felis ut quam.</p>
+                <p class="title">stop_times</p>
+                {% if stop_times > 0 %}
+                <p>There is {{ stop_times }} stop_times.</p>
+
+                <hr />
+                {% for direction, sts in summary %}
+                    <h3>{{ direction }}</h3>
+                    <hr />
+                    {% for stop in sts %}
+                    <div class="columns is-multiline">
+                        <h2>{{ forloop.index }}</h2>
+                        {% for sche in stop %}
+                        <div class="column timetable">{{ sche }}</div>
+                        {% endfor %}
+                    </div>
+                    {% endfor %}
+                <hr /> {% endfor %}
+
+                {% elif stop_times == 0 %}
+                <p>There is no trace yet.</p>
+                {% else %}
+                <p>There is a problem: {{ stop_times }}.</p>
+                {% endif %}
             </div>
         </div>
     </div>

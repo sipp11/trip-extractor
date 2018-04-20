@@ -58,7 +58,7 @@ func (h *Handler) checkDataCompleteness() bool {
 func main() {
 	cfg, err := ini.Load("my.ini")
 	if err != nil {
-		log.Fatal("Fail to read my.ini: %v", err)
+		log.Fatal("Fail to read my.ini: ", err)
 	}
 	port := cfg.Section("app").Key("port").String()
 	dbConn := cfg.Section("db").Key("path").String()
@@ -70,14 +70,14 @@ func main() {
 	defer db.Close()
 
 	if err != nil {
-		log.Fatal("Fail to connect to db server: %v", err)
+		log.Fatal("Fail to connect to db server: ", err)
 	}
 	h := &Handler{db: db, port: port, rangeWithinStop: rangeWithinStop}
 
 	args := os.Args[1:]
 	if len(args) > 0 && args[0] == "web" {
 		h.serveWebInterface()
-	} else {
+	} else if len(args) > 0 && args[0] == "gen" {
 		fmt.Printf("checking if data is good? ")
 		isGood := h.checkDataCompleteness()
 		if !isGood {
@@ -86,5 +86,15 @@ func main() {
 		}
 		fmt.Printf(" yes\n")
 		h.TripExtractor()
+	} else if len(args) > 0 && args[0] == "gtfs" {
+		// TODO: export stop_times --> gtfs feed `stop_times.txt`
+		fmt.Println("GTFS is a work in progress...")
+	} else {
+		fmt.Println(`Help:
+	./trip_extractor <cmd>
+
+	web     to serve web
+	gen     to generate timetable
+	gtfs    to generate GTFS feed: stop_times.txt`)
 	}
 }

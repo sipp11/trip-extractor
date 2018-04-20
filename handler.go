@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"database/sql"
 	"fmt"
+	"log"
 	"net/http"
+	"time"
 
 	"github.com/flosch/pongo2"
 	"github.com/labstack/echo"
@@ -94,7 +96,41 @@ func (h *Handler) IndexHandler(c echo.Context) error {
 	var indexTmpl = pongo2.Must(pongo2.FromFile("html/index.html"))
 	stopCnt, _ := h.ItemCount("stops")
 	traceCnt, _ := h.ItemCount("traces")
-	out, err := indexTmpl.Execute(pongo2.Context{"stops": stopCnt, "traces": traceCnt})
+	stopTimeCnt, _ := h.ItemCount("stop_times")
+
+	stops := h.getStops("", "ASC")
+
+	directions := h.getDistinctDirection()
+	// summary := make([][]string, len(stops))
+	summary := make(map[string][][]string)
+	for _, direction := range directions {
+		summary[direction] = make([][]string, len(stops))
+		for ind, stop := range stops {
+			where := fmt.Sprintf("direction='%s' AND stop_id='%s'", direction, stop.ID)
+			rows, err := h.queryStopTime(where, "ASC")
+			if err != nil {
+				log.Fatal("getStopTime err: ", err)
+			}
+			summary[direction][ind] = append(summary[direction][ind], stop.ID)
+			for rows.Next() {
+				var stopTime StopTime
+				rows.Scan(&stopTime.BoxID, &stopTime.StopID, &stopTime.Direction,
+					&stopTime.Sequence, &stopTime.Arrival, &stopTime.StopDuration)
+				tmsp, _ := time.Parse(time.RFC3339, stopTime.Arrival)
+				tmspStr := tmsp.Format("15:04:05")
+				oneST := fmt.Sprintf("%s (%d s)", tmspStr, stopTime.StopDuration)
+				summary[direction][ind] = append(summary[direction][ind], oneST)
+			}
+		}
+	}
+
+	out, err := indexTmpl.Execute(pongo2.Context{
+		"stops":      stopCnt,
+		"traces":     traceCnt,
+		"stop_times": stopTimeCnt,
+		"stop_items": stops,
+		"summary":    summary,
+	})
 	if err != nil {
 		return err
 	}
@@ -102,41 +138,8 @@ func (h *Handler) IndexHandler(c echo.Context) error {
 }
 
 func (h *Handler) resetData(c echo.Context) error {
-	if err := h.truncateStopAndTrace(); err != nil {
+	if err := h.truncateTables(); err != nil {
 		return c.HTML(http.StatusBadRequest, fmt.Sprintf("Something went wrong: %v", err))
 	}
 	return c.HTML(http.StatusOK, "Successfuly reset")
-}
-
-func (h *Handler) truncateStopAndTrace() error {
-	sq := `TRUNCATE TABLE stops;
-		TRUNCATE TABLE traces;`
-	_, err := h.db.Exec(sq)
-	return err
-}
-
-func (h *Handler) createStopTable() error {
-	sq := `CREATE TABLE stops (
-		stop_id char(150),
-		sequence int,
-		stop_name char(250),
-		stop_lat numeric,
-		stop_lon numeric,
-		is_terminal bool,
-		UNIQUE(stop_id)
-		)`
-	_, err := h.db.Exec(sq)
-	return err
-}
-
-func (h *Handler) createTraceTable() error {
-	cq := `CREATE TABLE traces (
-		box_id char(150),
-		timestamp timestamp,
-		lat	numeric,
-		lon numeric,
-		UNIQUE(box_id, timestamp)
-		)`
-	_, err := h.db.Exec(cq)
-	return err
 }
