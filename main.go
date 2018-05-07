@@ -89,6 +89,14 @@ func main() {
 	} else if len(args) > 0 && args[0] == "gtfs" {
 		// TODO: export stop_times --> gtfs feed `stop_times.txt`
 		fmt.Println("GTFS is a work in progress...")
+		fmt.Printf("checking if data is good? ")
+		isGood := h.checkDataCompleteness()
+		if !isGood {
+			fmt.Printf("WARNING: Not enough data to work on\n")
+			os.Exit(1)
+		}
+		fmt.Printf(" yes\n")
+		h.GTFSExporter()
 	} else {
 		fmt.Println(`Help:
 	./trip_extractor <cmd>

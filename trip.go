@@ -110,7 +110,9 @@ func (h *Handler) FindTripStartEnd(terminals []Stop) []Trip {
 		pnt := geo.NewPoint(trace.Lat, trace.Lon)
 		// if box changes -> end the old one, reset stuffs
 		if boxID != "" && boxID != trace.BoxID {
-			fmt.Println("found a new box: ", trace.BoxID, "   | old one: ", boxID)
+			fmt.Println(
+				"found a new box: ", strings.TrimSpace(trace.BoxID),
+				" | old one: ", strings.TrimSpace(boxID))
 			boxID = ""
 			trip = Trip{}
 			firstTerminal = Stop{}
@@ -267,7 +269,7 @@ func FillupMissingStopTime(l []StopTimeRaw, stops []Stop, direction string) []St
 		if ele != (StopTimeRaw{}) {
 			continue
 		}
-		fmt.Printf("[%s] This stop needs attention.\n", strings.TrimSpace(stops[ind].ID))
+		//fmt.Printf("[%s] This stop needs attention.\n", strings.TrimSpace(stops[ind].ID))
 		// no way we can miss first and last since we won't have a Trip to begin with
 		if ind == 0 || ind == len(l) {
 			continue
