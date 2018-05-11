@@ -2,9 +2,7 @@ package main
 
 import (
 	"fmt"
-	"log"
-	"os"
-	"strings"
+	s "strings"
 	"time"
 
 	"github.com/kellydunn/golang-geo"
@@ -34,163 +32,176 @@ type StopTimeRaw struct {
 	Direction string
 }
 
-func (h *Handler) getStops(where string, order string) []Stop {
+func (h *Handler) getStops(route string, order string, onlyTerminal bool) []Stop {
 	var stops []Stop
-	rows, err := h.queryStops(where, order)
-	if err != nil {
-		fmt.Printf("getStop err: %+v", err)
-		os.Exit(1)
-	}
+	rows, err := h.queryStops(route, order, onlyTerminal)
+	CheckError("getStop", err)
 	for rows.Next() {
 		var stop Stop
-		rows.Scan(&stop.ID, &stop.Sequence, &stop.Name, &stop.Lat, &stop.Lon, &stop.IsTerminal)
+		rows.Scan(&stop.ID, &stop.Sequence, &stop.Name, &stop.Lat, &stop.Lon, &stop.IsTerminal, &stop.LocationType, &stop.ParentStation)
 		stops = append(stops, stop)
 	}
 	return stops
 }
 
 // TripExtractor meant to get info for GTFS's `stop_times.txt`
-func (h *Handler) TripExtractor() []StopTimeRaw {
+func (h *Handler) TripExtractor(route string, routeRev string) []StopTimeRaw {
 	_ = h.truncateStopTimeTable()
 	fmt.Printf("start Trip Extractor\n")
-	stops := h.getStops("", "ASC")
-	terminals := h.getStops("is_terminal=TRUE", "ASC")
-	fmt.Printf("#stop %d  #terminal %d\n", len(stops), len(terminals))
-	trips := h.FindTripStartEnd(terminals)
-
-	fmt.Println("Trip Summery")
-	for ind, ele := range trips {
-		order := ind + 1
-		tt2, _ := time.Parse(time.RFC3339, ele.End)
-		tt1, _ := time.Parse(time.RFC3339, ele.Start)
-		tripDuration := tt2.Sub(tt1)
-		direction := fmt.Sprintf("%s..%s", strings.TrimSpace(ele.BeginAt.ID), strings.TrimSpace(ele.EndAt.ID))
-		fmt.Printf("%d.`%s`[%s] (%s) %+v - %+v => %0.1f Min \n",
-			order, ele.ID, strings.TrimSpace(ele.BoxID), direction,
-			ele.Start, ele.End, tripDuration.Minutes())
-		if len(ele.Comment) > 0 {
-			fmt.Printf("    :: %s\n", ele.Comment)
-		}
-		if len(ele.Comment) == 0 {
-			stopTimeTable := h.FindTripTimetable(ele, stops, direction)
-			for ind2, stEle := range stopTimeTable {
-				order := ind2 + 1
-				t2, _ := time.Parse(time.RFC3339, stEle.Departure)
-				t1, _ := time.Parse(time.RFC3339, stEle.Arrival)
-				duration := t2.Sub(t1)
-				fmt.Printf("   %d [%s] %+v -> %0.0f s \n",
-					order,
-					strings.TrimSpace(stEle.StopID),
-					stEle.Arrival,
-					duration.Seconds())
-				h.insertStopTime(stEle)
-			}
-		}
-	}
-	return nil
+	return h.ExtractTripWithRoute(route, routeRev)
 }
 
-// FindTripStartEnd to get array of trips from all traces
-func (h *Handler) FindTripStartEnd(terminals []Stop) []Trip {
-	rows, err := h.queryTraces("", "")
-	if err != nil {
-		log.Fatal("queryTraces err:", err)
+// ExtractTripWithRoute - has a limit that stop at the end has to be
+// the same name otherwise, it would not work
+func (h *Handler) ExtractTripWithRoute(route string, routeRev string) []StopTimeRaw {
+	allTrips := []StopTimeRaw{}
+	// Route for each direction
+	stopDirection := make(map[string][]Stop, 2)
+	stopDirection[route] = h.getStops(route, "ASC", false)
+	if len(routeRev) > 0 {
+		stopDirection[routeRev] = h.getStops(routeRev, "ASC", false)
+	} else {
+		// make reverse stops/route manually
+		routeRev = fmt.Sprintf("%s-rev", route)
+		stopDirection[routeRev] = h.getStops(route, "DESC", false)
+		for ind, stop := range stopDirection[routeRev] {
+			stop.Sequence = ind + 1
+		}
 	}
-	var (
-		trips         []Trip
-		boxID         string
-		trip          Trip
-		trace         Trace
-		firstTerminal Stop
-	)
-	isAtTerminalInd := -1
+	fwdTrip := h.findOneWayTripPeriod(
+		stopDirection[route][0],
+		stopDirection[route][len(stopDirection[route])-1],
+		route)
+	revTrip := h.findOneWayTripPeriod(
+		stopDirection[routeRev][0],
+		stopDirection[routeRev][len(stopDirection[routeRev])-1],
+		routeRev)
 
+	fmt.Printf("\n%s\n", route)
+	// for _, ele := range stopDirection[route] {
+	// 	fmt.Print(ele.Sequence, ". ", s.TrimSpace(ele.ID), " -> ")
+	// }
+	hhmm := "15:04:05"
+	for ind, trip := range fwdTrip {
+		tt2, _ := time.Parse(time.RFC3339, trip.End)
+		tt1, _ := time.Parse(time.RFC3339, trip.Start)
+		tripDuration := tt2.Sub(tt1)
+		fmt.Printf("%d. %.0f min: %s -> %s\n",
+			ind+1, tripDuration.Minutes(),
+			tt1.Format(hhmm), tt2.Format(hhmm))
+		h.LogPrint(fmt.Sprintf("     %s\n", s.TrimSpace(trip.BoxID)))
+		stopTimeRaws := h.FindTripTimeTable(trip, stopDirection[route], route)
+		allTrips = append(allTrips, stopTimeRaws...)
+		h.printAndInsertTimeTable(stopTimeRaws)
+	}
+	fmt.Printf("\n%s\n", routeRev)
+	for ind, trip := range revTrip {
+		tt2, _ := time.Parse(time.RFC3339, trip.End)
+		tt1, _ := time.Parse(time.RFC3339, trip.Start)
+		tripDuration := tt2.Sub(tt1)
+		fmt.Printf("%d. %.0f min: %s -> %s\n",
+			ind+1, tripDuration.Minutes(),
+			tt1.Format(hhmm), tt2.Format(hhmm))
+		h.LogPrint(fmt.Sprintf("     %s\n", s.TrimSpace(trip.BoxID)))
+		stopTimeRaws := h.FindTripTimeTable(trip, stopDirection[routeRev], routeRev)
+		allTrips = append(allTrips, stopTimeRaws...)
+		h.printAndInsertTimeTable(stopTimeRaws)
+	}
+	return allTrips
+}
+
+func (h *Handler) printAndInsertTimeTable(stt []StopTimeRaw) {
+	for _, stEle := range stt {
+		t2, _ := time.Parse(time.RFC3339, stEle.Departure)
+		t1, _ := time.Parse(time.RFC3339, stEle.Arrival)
+		duration := t2.Sub(t1)
+		h.LogPrint(fmt.Sprintf("   %d /%s/ [%s] %+v -> %0.0f s \n",
+			stEle.Sequence+1,
+			s.TrimSpace(stEle.Direction),
+			s.TrimSpace(stEle.StopID),
+			stEle.Arrival,
+			duration.Seconds()))
+		h.insertStopTime(stEle)
+	}
+}
+
+func (h *Handler) findOneWayTripPeriod(beginAt Stop, endAt Stop, tripPrefix string) []Trip {
+
+	whereArr := make([]string, 2)
+	// filter trace for only what inside this sphere (50 m radius)
+	// both terminals -- so we don't have to process traces in between
+	distance := int(h.rangeWithinStop * 1000)
+	tmpl := "ST_DistanceSphere(geom, ST_MakePoint(%f,%f)) <= %d"
+	whereArr[0] = fmt.Sprintf(tmpl, beginAt.Lon, beginAt.Lat, distance)
+	whereArr[1] = fmt.Sprintf(tmpl, endAt.Lon, endAt.Lat, distance)
+	whereClause := s.Join(whereArr, " OR ")
+	rows, err := h.queryTraces(whereClause, "ASC")
+	CheckError("Find traces inside terminals", err)
+
+	var (
+		trips []Trip
+		boxID string
+		trip  Trip
+		trace Trace
+	)
+	beginPoint := geo.NewPoint(beginAt.Lat, beginAt.Lon)
+	endPoint := geo.NewPoint(endAt.Lat, endAt.Lon)
+	tripCounter := 1
 	for rows.Next() {
 		rows.Scan(&trace.BoxID, &trace.Timestamp, &trace.Lat, &trace.Lon)
 		pnt := geo.NewPoint(trace.Lat, trace.Lon)
-		// if box changes -> end the old one, reset stuffs
-		if boxID != "" && boxID != trace.BoxID {
-			fmt.Println(
-				"found a new box: ", strings.TrimSpace(trace.BoxID),
-				" | old one: ", strings.TrimSpace(boxID))
-			boxID = ""
+
+		// reset anything if BoxID changes
+		if boxID != trace.BoxID {
 			trip = Trip{}
-			firstTerminal = Stop{}
-			isAtTerminalInd = -1
 		}
-		if boxID == "" {
-			boxID = trace.BoxID
-		}
-		// result in km
-		terminalsDistance := make([]float64, len(terminals))
-		for ind, ele := range terminals {
-			tGeoPoint := geo.NewPoint(ele.Lat, ele.Lon)
-			terminalsDistance[ind] = pnt.GreatCircleDistance(tGeoPoint)
-		}
-		// init trip
-		if firstTerminal == (Stop{}) {
-			gotFirst := false
-			for ind, dist := range terminalsDistance {
-				if dist < h.rangeWithinStop {
-					firstTerminal = terminals[ind]
-					gotFirst = true
-					isAtTerminalInd = ind
-					break
+
+		// start checking if it's at the first terminal
+		bDistance := beginPoint.GreatCircleDistance(pnt)
+		if bDistance < h.rangeWithinStop {
+			if trip.Start == "" {
+				// init this trip
+				boxID = trace.BoxID
+				trip = Trip{
+					BeginAt: beginAt,
+					Start:   trace.Timestamp,
+					BoxID:   trace.BoxID,
 				}
-			}
-			if gotFirst == false {
-				// if we haven't found the first terminal,
-				// prior to this data is no good anyway
-				continue
-			}
-			// init trip
-			trip.BeginAt = terminals[isAtTerminalInd]
-			trip.Start = trace.Timestamp
-			trip.BoxID = boxID
-		}
-		// skip anything if is at the same terminal
-		if isAtTerminalInd != -1 {
-			// check if it's at the same terminal? then continue
-			if terminalsDistance[isAtTerminalInd] < h.rangeWithinStop {
-				// trip start when it departs the terminal,
-				// not when it first arrives
-				trip.Start = trace.Timestamp
-				continue
 			} else {
-				isAtTerminalInd = -1
+				// if it's still at the first terminal, set new start time
+				trip.Start = trace.Timestamp
 			}
+			continue
 		}
-		for ind, dist := range terminalsDistance {
-			if dist < h.rangeWithinStop {
-				// this is what it shouldn't be... maybe GPS sucks
-				if isAtTerminalInd != -1 {
-					trip.Comment = "[GPSSucks] jumping from terminal to terminal, huh?"
-				} else if terminals[ind] == trip.BeginAt {
-					trip.Comment = "[IncompletedTrip] round trip w/o hitting another terminal"
-				}
+		// if trip is initialized yet, no point checking the rest
+		if trip.Start == "" {
+			continue
+		}
+		// checking if it's at the second terminal
+		eDistance := endPoint.GreatCircleDistance(pnt)
+		if eDistance < h.rangeWithinStop {
+			if trip.Start != "" {
+
+				// end this trip
 				trip.End = trace.Timestamp
-				trip.EndAt = terminals[ind]
-				trip.ID = RandString(6)
+				trip.EndAt = endAt
+				trip.ID = fmt.Sprintf("%s__%d", tripPrefix, tripCounter)
 				trips = append(trips, trip)
 				trip = Trip{}
-				isAtTerminalInd = -1
-				firstTerminal = Stop{}
+				tripCounter++
 			}
 		}
 	}
 	return trips
 }
 
-// FindTripTimetable to get detail of trip and stop along the way
+// FindTripTimeTable to get detail of trip and stop along the way
 // and interpolate if there is no data stopping at the stop
-func (h *Handler) FindTripTimetable(trip Trip, stops []Stop, direction string) []StopTimeRaw {
+func (h *Handler) FindTripTimeTable(t Trip, stops []Stop, d string) []StopTimeRaw {
 	q := fmt.Sprintf("box_id = '%s' AND timestamp >= '%s' AND timestamp <= '%s'",
-		trip.BoxID, trip.Start, trip.End)
-	// fmt.Println(q)
+		t.BoxID, t.Start, t.End)
 	rows, err := h.queryTraces(q, "ASC")
-	if err != nil {
-		log.Fatal(err)
-	}
+	CheckError("findTripTimeTable 00", err)
 	var (
 		trace    Trace
 		boxID    string
@@ -208,7 +219,6 @@ func (h *Handler) FindTripTimetable(trip Trip, stops []Stop, direction string) [
 		if boxID == "" {
 			boxID = trace.BoxID
 		}
-
 		atTheStop := -1
 		for ind, ele := range stops {
 			tGeoPoint := geo.NewPoint(ele.Lat, ele.Lon)
@@ -218,11 +228,11 @@ func (h *Handler) FindTripTimetable(trip Trip, stops []Stop, direction string) [
 				if stopTime == (StopTimeRaw{}) {
 					// init stopTime
 					stopTime.BoxID = trace.BoxID
-					stopTime.TripID = trip.ID
+					stopTime.TripID = t.ID
 					stopTime.Arrival = trace.Timestamp
 					stopTime.Departure = trace.Timestamp
 					stopTime.StopID = ele.ID
-					stopTime.Direction = direction
+					stopTime.Direction = d
 					stopTime.Sequence = ind
 				} else {
 					// check if it's still at the same stop
@@ -235,11 +245,11 @@ func (h *Handler) FindTripTimetable(trip Trip, stops []Stop, direction string) [
 						results[stopTime.Sequence] = stopTime
 						stopTime = StopTimeRaw{
 							BoxID:     trace.BoxID,
-							TripID:    trip.ID,
+							TripID:    t.ID,
 							Arrival:   trace.Timestamp,
 							Departure: trace.Timestamp,
 							StopID:    ele.ID,
-							Direction: direction,
+							Direction: d,
 							Sequence:  ind,
 						}
 					}
@@ -259,51 +269,57 @@ func (h *Handler) FindTripTimetable(trip Trip, stops []Stop, direction string) [
 	if results[stopTime.Sequence] == (StopTimeRaw{}) {
 		results[stopTime.Sequence] = stopTime
 	}
-	results = FillupMissingStopTime(results, stops, direction)
+	results = FillupMissingStopTime(results, stops, d)
 	return results
 }
 
 // FillupMissingStopTime by interpolating
 func FillupMissingStopTime(l []StopTimeRaw, stops []Stop, direction string) []StopTimeRaw {
+	i := -1
+	j := -1
 	for ind, ele := range l {
-		if ele != (StopTimeRaw{}) {
+		if ele == (StopTimeRaw{}) {
 			continue
 		}
-		//fmt.Printf("[%s] This stop needs attention.\n", strings.TrimSpace(stops[ind].ID))
-		// no way we can miss first and last since we won't have a Trip to begin with
-		if ind == 0 || ind == len(l) {
+		if i == -1 {
+			i = ind
 			continue
 		}
-		// NOTE: this doesn't handle anything but missing just one StopTime
-		interpolated := simpleInterpolation(l[ind-1], l[ind+1], stops, ind)
-		interpolated.Direction = direction
-		l[ind] = interpolated
+		// fill up missing one
+		j = ind
+		orig := l[i]
+		origTime, _ := time.Parse(time.RFC3339, orig.Departure)
+		distanceIJ := distanceBetween(stops[i], stops[j])
+		durationIJ := durationBetween(l[i].Departure, l[j].Arrival)
+		for k := i + 1; k < j; k++ {
+			distanceIK := distanceBetween(stops[i], stops[k])
+			durationIK := distanceIK / distanceIJ * float64(durationIJ)
+
+			arrivedAt := origTime.Add(time.Duration(durationIK))
+			l[k] = StopTimeRaw{
+				TripID:    orig.TripID,
+				StopID:    stops[k].ID,
+				Arrival:   arrivedAt.Format(time.RFC3339),
+				Departure: arrivedAt.Format(time.RFC3339),
+				BoxID:     orig.BoxID,
+				Sequence:  k,
+				Direction: orig.Direction,
+			}
+		}
+		i = ind
+		j = -1
 	}
 	return l
 }
 
-// Linear StopTime interpolation, simple and effective
-func simpleInterpolation(before StopTimeRaw, after StopTimeRaw, stops []Stop, targetInd int) StopTimeRaw {
-	result := StopTimeRaw{
-		TripID:   before.TripID,
-		StopID:   stops[targetInd].ID,
-		BoxID:    before.BoxID,
-		Sequence: before.Sequence + 1,
-	}
-	t2, _ := time.Parse(time.RFC3339, after.Arrival)
-	t1, _ := time.Parse(time.RFC3339, before.Departure)
-	overlapPeriod := t2.Sub(t1)
-	pnt2 := geo.NewPoint(stops[targetInd+1].Lat, stops[targetInd+1].Lon)
-	pnt1 := geo.NewPoint(stops[targetInd-1].Lat, stops[targetInd-1].Lon)
-	pntTarget := geo.NewPoint(stops[targetInd].Lat, stops[targetInd].Lon)
+func distanceBetween(a Stop, b Stop) float64 {
+	aPoint := geo.NewPoint(a.Lat, a.Lon)
+	bPoint := geo.NewPoint(b.Lat, b.Lon)
+	return aPoint.GreatCircleDistance(bPoint)
+}
 
-	targetToNext := pntTarget.GreatCircleDistance(pnt2)
-	prevToTarget := pnt1.GreatCircleDistance(pntTarget)
-
-	targetPeriod := prevToTarget / (prevToTarget + targetToNext) * overlapPeriod.Seconds()
-
-	targetArrivalTime := t1.Add(time.Duration(targetPeriod) * time.Second)
-	result.Arrival = targetArrivalTime.Format(time.RFC3339)
-	result.Departure = result.Arrival
-	return result
+func durationBetween(a string, b string) time.Duration {
+	t2, _ := time.Parse(time.RFC3339, b)
+	t1, _ := time.Parse(time.RFC3339, a)
+	return t2.Sub(t1)
 }

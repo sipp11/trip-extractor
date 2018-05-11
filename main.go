@@ -2,64 +2,61 @@ package main
 
 import (
 	"database/sql"
+	"flag"
 	"fmt"
 	"log"
 	"os"
-	"time"
 
-	"github.com/labstack/echo"
-	validator "gopkg.in/go-playground/validator.v9"
 	ini "gopkg.in/ini.v1"
 )
 
-// CustomValidator no idea what this is
-type CustomValidator struct {
-	validator *validator.Validate
-}
+var (
+	verbose  = flag.Bool("v", false, "Verbose mode")
+	route    = flag.String("rt", "", "route_id")
+	routeRev = flag.String("rtrv", "", "route_id for reverse (use the same route if not specified)")
+	radius   = flag.Int("radius", 50, "Radius in meter for checking stop")
+)
 
-// Validate is to validate input data
-func (cv *CustomValidator) Validate(i interface{}) error {
-	return cv.validator.Struct(i)
-}
+var usage = `Usage: trip_extractor [options...] <cmd>
+Options:
+  -v        verbosely
+  -rt       route_id (1)
+  -rtrv     [optional] route_id (2) for reverse
+            (use the same route_id if not specified)
+  -radius   Radius (m) for stop detection
+            (50m as default)
 
-func (h *Handler) serveWebInterface() {
+Command:
 
-	layout := "2006-01-02T15:04:05-0700"
-	t, _ := time.Parse(layout, "2014-11-17T23:02:03+0000")
-	t2, _ := time.Parse(layout, "2014-11-18T06:02:03+0700")
-	fmt.Println("time: ", t, t.Unix())
-	fmt.Println("time: ", t2, t2.Unix())
+  initdb      to create all necessary tables
+  web         to serve web
+  gen         to generate timetable
+  gtfs        to generate GTFS feed: stop_times.txt
+  flushdb     to drop all and create new tables
+  geom_regen  to update all records with "geom type" from lat, lon fields
+`
 
-	e := echo.New()
-	e.Validator = &CustomValidator{validator: validator.New()}
-
-	e.Static("/static", "assets")
-	e.GET("/", h.IndexHandler)
-	e.POST("/input/reset", h.resetData)
-	e.POST("/input/stop", h.StopInputHandler)
-	e.POST("/input/trace", h.TraceInputHandler)
-	e.Logger.Fatal(e.Start(fmt.Sprintf(":%s", h.port)))
-}
-
-func (h *Handler) checkDataCompleteness() bool {
-	stopCnt, _ := h.ItemCount("stops")
-	traceCnt, _ := h.ItemCount("traces")
-	if stopCnt < 6 {
-		fmt.Printf("#stops = %d\n > which is NOT enough to do anything meaningful\n", stopCnt)
-		return false
+func usageAndExit(msg string) {
+	if msg != "" {
+		fmt.Fprintf(os.Stderr, msg)
+		fmt.Fprintf(os.Stderr, "\n\n")
 	}
-	if traceCnt < 60 {
-		fmt.Printf("#traces = %d\n > which is NOT enough to do anything meaningful\n", traceCnt)
-		return false
-	}
-	return true
+	flag.Usage()
+	fmt.Fprintf(os.Stderr, "\n")
+	os.Exit(1)
 }
 
 func main() {
-	cfg, err := ini.Load("my.ini")
-	if err != nil {
-		log.Fatal("Fail to read my.ini: ", err)
+	flag.Usage = func() {
+		fmt.Fprint(os.Stderr, usage)
 	}
+	flag.Parse()
+	if flag.NArg() < 1 {
+		usageAndExit("")
+	}
+	cfg, err := ini.Load("my.ini")
+	CheckError("Fail to read my.ini", err)
+
 	port := cfg.Section("app").Key("port").String()
 	dbConn := cfg.Section("db").Key("path").String()
 	rangeWithinStop, err := cfg.Section("app").Key("range_km_within_stop").Float64()
@@ -68,41 +65,69 @@ func main() {
 	}
 	db, err := sql.Open("postgres", dbConn)
 	defer db.Close()
+	CheckError("Fail to connect to db server", err)
 
-	if err != nil {
-		log.Fatal("Fail to connect to db server: ", err)
+	h := &Handler{
+		db:              db,
+		port:            port,
+		rangeWithinStop: rangeWithinStop,
+		verbose:         *verbose,
 	}
-	h := &Handler{db: db, port: port, rangeWithinStop: rangeWithinStop}
+	args := flag.Args()
 
-	args := os.Args[1:]
-	if len(args) > 0 && args[0] == "web" {
+	switch args[0] {
+
+	case "web":
 		h.serveWebInterface()
-	} else if len(args) > 0 && args[0] == "gen" {
-		fmt.Printf("checking if data is good? ")
-		isGood := h.checkDataCompleteness()
-		if !isGood {
-			fmt.Printf("WARNING: Not enough data to work on\n")
-			os.Exit(1)
-		}
-		fmt.Printf(" yes\n")
-		h.TripExtractor()
-	} else if len(args) > 0 && args[0] == "gtfs" {
-		// TODO: export stop_times --> gtfs feed `stop_times.txt`
-		fmt.Println("GTFS is a work in progress...")
-		fmt.Printf("checking if data is good? ")
-		isGood := h.checkDataCompleteness()
-		if !isGood {
-			fmt.Printf("WARNING: Not enough data to work on\n")
-			os.Exit(1)
-		}
-		fmt.Printf(" yes\n")
-		h.GTFSExporter()
-	} else {
-		fmt.Println(`Help:
-	./trip_extractor <cmd>
 
-	web     to serve web
-	gen     to generate timetable
-	gtfs    to generate GTFS feed: stop_times.txt`)
+	case "initdb":
+
+		fmt.Printf("Database Initialization? ")
+		err := h.InitDB()
+		if err != nil {
+			fmt.Print("yes")
+		} else {
+			fmt.Printf("no because %+v", err)
+		}
+
+	case "flushdb":
+		err := h.FlushDatabase()
+		CheckError("Database flush error: ", err)
+		fmt.Println("Database flushed")
+
+	case "geom_regen":
+		err := h.GeomRegenerate()
+		CheckError("GEOM regeneration error: ", err)
+		fmt.Println("GEOM updated")
+
+	case "gen":
+		if len(*route) == 0 {
+			usageAndExit("No route_id specified")
+		}
+		// fmt.Printf("checking if data is good? ")
+		// isGood := h.CheckDataCompleteness()
+		// if !isGood {
+		// 	fmt.Printf("WARNING: Not enough data to work on\n")
+		// 	os.Exit(1)
+		// }
+		// fmt.Printf(" yes\n")
+		h.TripExtractor(*route, *routeRev)
+
+	case "gtfs":
+		if len(*route) == 0 {
+			usageAndExit("No route_id specified")
+		}
+		// fmt.Println("GTFS is a work in progress...")
+		// fmt.Printf("checking if data is good? ")
+		// isGood := h.CheckDataCompleteness()
+		// if !isGood {
+		// 	fmt.Printf("WARNING: Not enough data to work on\n")
+		// 	os.Exit(1)
+		// }
+		// fmt.Printf(" yes\n")
+		h.GTFSExporter(*route, *routeRev)
+
+	default:
+		usageAndExit("")
 	}
 }

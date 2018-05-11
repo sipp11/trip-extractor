@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"database/sql"
 	"fmt"
 	"log"
 	"net/http"
@@ -11,23 +10,36 @@ import (
 	"github.com/flosch/pongo2"
 	"github.com/labstack/echo"
 	"github.com/lib/pq"
+	validator "gopkg.in/go-playground/validator.v9"
 )
 
-type (
-	// Handler to handle all route
-	Handler struct {
-		db              *sql.DB
-		port            string
-		rangeWithinStop float64
-	}
+// CustomValidator no idea what this is
+type CustomValidator struct {
+	validator *validator.Validate
+}
 
-	// Result for all input handlers
-	Result struct {
-		Success int    `json:"success"`
-		Failed  int    `json:"failed"`
-		Message string `json:"message"`
-	}
-)
+// Validate is to validate input data
+func (cv *CustomValidator) Validate(i interface{}) error {
+	return cv.validator.Struct(i)
+}
+
+func (h *Handler) serveWebInterface() {
+
+	layout := "2006-01-02T15:04:05-0700"
+	t, _ := time.Parse(layout, "2014-11-17T23:02:03+0000")
+	t2, _ := time.Parse(layout, "2014-11-18T06:02:03+0700")
+	fmt.Println("time: ", t, t.Unix())
+	fmt.Println("time: ", t2, t2.Unix())
+	e := echo.New()
+	e.Validator = &CustomValidator{validator: validator.New()}
+
+	e.Static("/static", "assets")
+	e.GET("/", h.IndexHandler)
+	e.POST("/input/reset", h.resetData)
+	e.POST("/input/stop", h.StopInputHandler)
+	e.POST("/input/trace", h.TraceInputHandler)
+	e.Logger.Fatal(e.Start(fmt.Sprintf(":%s", h.port)))
+}
 
 // StopInputHandler to accept stop via REST interface
 func (h *Handler) StopInputHandler(c echo.Context) (err error) {
@@ -95,19 +107,20 @@ func (h *Handler) TraceInputHandler(c echo.Context) error {
 func (h *Handler) IndexHandler(c echo.Context) error {
 	var indexTmpl = pongo2.Must(pongo2.FromFile("html/index.html"))
 	stopCnt, _ := h.ItemCount("stops")
+	stopAndRouteCnt, _ := h.ItemCount("stop_and_route")
 	traceCnt, _ := h.ItemCount("traces")
 	stopTimeCnt, _ := h.ItemCount("stop_times")
-
-	stops := h.getStops("", "ASC")
-
 	directions := h.getDistinctDirection()
-	// summary := make([][]string, len(stops))
 	summary := make(map[string][][]string)
+
 	for _, direction := range directions {
+		stops := h.getStops(direction, "ASC", false)
 		summary[direction] = make([][]string, len(stops))
 		for ind, stop := range stops {
 			where := fmt.Sprintf("direction='%s' AND stop_id='%s'", direction, stop.ID)
-			rows, err := h.queryStopTime(where, "ASC")
+			fieldOrder := `box_id,stop_id,direction,sequence,to_char(arrival, 'HH24:MI') as hhmm,stop_duration`
+			query := fmt.Sprintf(`SELECT %s from stop_times WHERE %s order by hhmm ASC;`, fieldOrder, where)
+			rows, err := h.db.Query(query)
 			if err != nil {
 				log.Fatal("getStopTime err: ", err)
 			}
@@ -116,20 +129,18 @@ func (h *Handler) IndexHandler(c echo.Context) error {
 				var stopTime StopTime
 				rows.Scan(&stopTime.BoxID, &stopTime.StopID, &stopTime.Direction,
 					&stopTime.Sequence, &stopTime.Arrival, &stopTime.StopDuration)
-				tmsp, _ := time.Parse(time.RFC3339, stopTime.Arrival)
-				tmspStr := tmsp.Format("15:04:05")
-				oneST := fmt.Sprintf("%s (%d s)", tmspStr, stopTime.StopDuration)
+				oneST := fmt.Sprintf("%s (%d s)", stopTime.Arrival, stopTime.StopDuration)
 				summary[direction][ind] = append(summary[direction][ind], oneST)
 			}
 		}
 	}
 
 	out, err := indexTmpl.Execute(pongo2.Context{
-		"stops":      stopCnt,
-		"traces":     traceCnt,
-		"stop_times": stopTimeCnt,
-		"stop_items": stops,
-		"summary":    summary,
+		"stops":          stopCnt,
+		"stop_and_route": stopAndRouteCnt,
+		"traces":         traceCnt,
+		"stop_times":     stopTimeCnt,
+		"summary":        summary,
 	})
 	if err != nil {
 		return err

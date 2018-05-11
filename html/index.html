@@ -35,7 +35,7 @@
             <div class="tile is-child notification is-warning">
                 <p class="title">Input: stops</p>
                 {% if stops > 0 %}
-                <p>There is {{ stops }} stops.</p>
+                <p>There is {{ stops }} stops. ({{ stop_and_route }} stop-n-routes)</p>
                 {% elif stops == 0 %}
                     <p>There is no stop yet.</p>
                 {% else %}
@@ -72,7 +72,7 @@
                         {% endfor %}
                     </div>
                     {% endfor %}
-                <hr /> {% endfor %}
+                <hr />{% endfor %}
 
                 {% elif stop_times == 0 %}
                 <p>There is no trace yet.</p>
