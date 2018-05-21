@@ -26,7 +26,8 @@ func makeRange(size int, ascending bool) []int {
 // * trips.txt (route_id, service_id, trip_id) only trip_id; the rest is dummy
 // * routes.txt - now we have route
 func (h *Handler) GTFSExporter(route string, routeRev string) {
-
+	// make sure we have "output"
+	_ = os.Mkdir(h.outputDir, 0755)
 	stops := h.getStops("", "ASC", false)
 	h.StopExporter(stops)
 	h.RouteExporter()
@@ -37,7 +38,7 @@ func (h *Handler) GTFSExporter(route string, routeRev string) {
 
 // StopExporter will give stops.txt
 func (h *Handler) StopExporter(stops []Stop) {
-	file, err := os.Create("stops.txt")
+	file, err := os.Create(fmt.Sprintf("%s/stops.txt", h.outputDir))
 	CheckError("cannot create file", err)
 	defer file.Close()
 	writer := csv.NewWriter(file)
@@ -64,7 +65,7 @@ func (h *Handler) StopExporter(stops []Stop) {
 
 // RouteExporter will give routes.txt
 func (h *Handler) RouteExporter() {
-	file, err := os.Create("routes.txt")
+	file, err := os.Create(fmt.Sprintf("%s/routes.txt", h.outputDir))
 	CheckError("cannot create file", err)
 	defer file.Close()
 	writer := csv.NewWriter(file)
@@ -89,7 +90,7 @@ func (h *Handler) RouteExporter() {
 // TripExporter will give trips.txt
 func (h *Handler) TripExporter(trips []string) {
 	// route_id,service_id,trip_id,direction_id,block_id,shape_id,trip_type
-	file, err := os.Create("trips.txt")
+	file, err := os.Create(fmt.Sprintf("%s/trips.txt", h.outputDir))
 	CheckError("cannot create file", err)
 	defer file.Close()
 	writer := csv.NewWriter(file)
@@ -118,12 +119,13 @@ func (h *Handler) StopTimesExporter(r string, rrv string) []string {
 	// trip_id,arrival_time,departure_time,stop_id,stop_sequence,
 	// stop_headsign,pickup_type,drop_off_type,shape_dist_traveled,
 	// timepoint,continuous_drop_off,continuous_pickup
+	bkk, _ := time.LoadLocation("Asia/Bangkok")
 	tripIDs := []string{}
 	stopTimeRaws := h.ExtractTripWithRoute(r, rrv)
 
 	fmt.Printf("exporting: stop_times\n")
 
-	file, err := os.Create("stop_times.txt")
+	file, err := os.Create(fmt.Sprintf("%s/stop_times.txt", h.outputDir))
 	CheckError("cannot create file", err)
 	defer file.Close()
 
@@ -148,8 +150,8 @@ func (h *Handler) StopTimesExporter(r string, rrv string) []string {
 		t1, _ := time.Parse(time.RFC3339, ele.Arrival)
 		t2, _ := time.Parse(time.RFC3339, ele.Departure)
 		one[0] = fmt.Sprintf("%+v", ele.TripID)
-		one[1] = t1.Format(hhmm)
-		one[2] = t2.Format(hhmm)
+		one[1] = t1.In(bkk).Format(hhmm)
+		one[2] = t2.In(bkk).Format(hhmm)
 		one[3] = s.TrimSpace(ele.StopID)
 		one[4] = fmt.Sprintf("%d", ele.Sequence+1)
 		err = writer.Write(one)

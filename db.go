@@ -115,6 +115,8 @@ func (h *Handler) createStopTimeTable() error {
 }
 
 func (h *Handler) insertStopTime(st StopTimeRaw) error {
+	bkk, _ := time.LoadLocation("Asia/Bangkok")
+
 	insertQuery := `INSERT INTO stop_times
 	(box_id, stop_id, direction, sequence, arrival, stop_duration)
 	values ($1,$2,$3,$4,$5,$6);`
@@ -126,7 +128,8 @@ func (h *Handler) insertStopTime(st StopTimeRaw) error {
 	t2, _ := time.Parse(time.RFC3339, st.Departure)
 	t1, _ := time.Parse(time.RFC3339, st.Arrival)
 	duration := t2.Sub(t1)
-	_, err = stmt.Exec(st.BoxID, st.StopID, st.Direction, st.Sequence, st.Arrival, int(duration.Seconds()))
+	_, err = stmt.Exec(st.BoxID, st.StopID, st.Direction,
+		st.Sequence, t1.In(bkk).Format(time.RFC3339), int(duration.Seconds()))
 	return err
 
 }

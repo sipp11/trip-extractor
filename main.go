@@ -11,15 +11,19 @@ import (
 )
 
 var (
-	verbose  = flag.Bool("v", false, "Verbose mode")
-	route    = flag.String("rt", "", "route_id")
-	routeRev = flag.String("rtrv", "", "route_id for reverse (use the same route if not specified)")
-	radius   = flag.Int("radius", 50, "Radius in meter for checking stop")
+	verbose   = flag.Bool("v", false, "Verbose mode")
+	outputDir = flag.String("dir", "output", "GTFS output directory")
+	day       = flag.String("day", "", "Filtered day (Mon, Tue, ...)")
+	route     = flag.String("rt", "", "route_id")
+	routeRev  = flag.String("rtrv", "", "route_id for reverse (use the same route if not specified)")
+	radius    = flag.Int("radius", 50, "Radius in meter for checking stop")
 )
 
 var usage = `Usage: trip_extractor [options...] <cmd>
 Options:
   -v        verbosely
+  -dir      GTFS output directory
+  -day      Filtered day (Mon, Tue, ...) default: no filter
   -rt       route_id (1)
   -rtrv     [optional] route_id (2) for reverse
             (use the same route_id if not specified)
@@ -72,6 +76,8 @@ func main() {
 		port:            port,
 		rangeWithinStop: rangeWithinStop,
 		verbose:         *verbose,
+		outputDir:       *outputDir,
+		day:             *day,
 	}
 	args := flag.Args()
 

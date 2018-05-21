@@ -15,6 +15,8 @@ type (
 		port            string
 		rangeWithinStop float64
 		verbose         bool
+		outputDir       string
+		day             string
 	}
 
 	// Result for all input handlers

@@ -54,6 +54,7 @@ func (h *Handler) TripExtractor(route string, routeRev string) []StopTimeRaw {
 // ExtractTripWithRoute - has a limit that stop at the end has to be
 // the same name otherwise, it would not work
 func (h *Handler) ExtractTripWithRoute(route string, routeRev string) []StopTimeRaw {
+	bkk, _ := time.LoadLocation("Asia/Bangkok")
 	allTrips := []StopTimeRaw{}
 	// Route for each direction
 	stopDirection := make(map[string][]Stop, 2)
@@ -85,10 +86,16 @@ func (h *Handler) ExtractTripWithRoute(route string, routeRev string) []StopTime
 	for ind, trip := range fwdTrip {
 		tt2, _ := time.Parse(time.RFC3339, trip.End)
 		tt1, _ := time.Parse(time.RFC3339, trip.Start)
+		day := tt1.In(bkk).Format("Mon")
+		if h.day != "" && day != h.day {
+			continue
+		}
 		tripDuration := tt2.Sub(tt1)
-		fmt.Printf("%d. %.0f min: %s -> %s\n",
+		fmt.Printf("%d. %.0f min: [%s] %s -> %s  /%s/\n",
 			ind+1, tripDuration.Minutes(),
-			tt1.Format(hhmm), tt2.Format(hhmm))
+			day,
+			tt1.In(bkk).Format(hhmm), tt2.In(bkk).Format(hhmm),
+			s.TrimSpace(trip.BoxID))
 		h.LogPrint(fmt.Sprintf("     %s\n", s.TrimSpace(trip.BoxID)))
 		stopTimeRaws := h.FindTripTimeTable(trip, stopDirection[route], route)
 		allTrips = append(allTrips, stopTimeRaws...)
@@ -98,10 +105,16 @@ func (h *Handler) ExtractTripWithRoute(route string, routeRev string) []StopTime
 	for ind, trip := range revTrip {
 		tt2, _ := time.Parse(time.RFC3339, trip.End)
 		tt1, _ := time.Parse(time.RFC3339, trip.Start)
+		day := tt1.In(bkk).Format("Mon")
+		if h.day != "" && day != h.day {
+			continue
+		}
 		tripDuration := tt2.Sub(tt1)
-		fmt.Printf("%d. %.0f min: %s -> %s\n",
+		fmt.Printf("%d. %.0f min: [%s] %s -> %s  /%s/\n",
 			ind+1, tripDuration.Minutes(),
-			tt1.Format(hhmm), tt2.Format(hhmm))
+			tt1.In(bkk).Format("Mon"),
+			tt1.In(bkk).Format(hhmm), tt2.In(bkk).Format(hhmm),
+			s.TrimSpace(trip.BoxID))
 		h.LogPrint(fmt.Sprintf("     %s\n", s.TrimSpace(trip.BoxID)))
 		stopTimeRaws := h.FindTripTimeTable(trip, stopDirection[routeRev], routeRev)
 		allTrips = append(allTrips, stopTimeRaws...)
@@ -111,15 +124,18 @@ func (h *Handler) ExtractTripWithRoute(route string, routeRev string) []StopTime
 }
 
 func (h *Handler) printAndInsertTimeTable(stt []StopTimeRaw) {
+	bkk, _ := time.LoadLocation("Asia/Bangkok")
+
 	for _, stEle := range stt {
 		t2, _ := time.Parse(time.RFC3339, stEle.Departure)
 		t1, _ := time.Parse(time.RFC3339, stEle.Arrival)
+
 		duration := t2.Sub(t1)
 		h.LogPrint(fmt.Sprintf("   %d /%s/ [%s] %+v -> %0.0f s \n",
 			stEle.Sequence+1,
 			s.TrimSpace(stEle.Direction),
 			s.TrimSpace(stEle.StopID),
-			stEle.Arrival,
+			t1.In(bkk).Format(time.RFC1123Z),
 			duration.Seconds()))
 		h.insertStopTime(stEle)
 	}
@@ -181,14 +197,21 @@ func (h *Handler) findOneWayTripPeriod(beginAt Stop, endAt Stop, tripPrefix stri
 		eDistance := endPoint.GreatCircleDistance(pnt)
 		if eDistance < h.rangeWithinStop {
 			if trip.Start != "" {
-
-				// end this trip
-				trip.End = trace.Timestamp
-				trip.EndAt = endAt
-				trip.ID = fmt.Sprintf("%s__%d", tripPrefix, tripCounter)
-				trips = append(trips, trip)
-				trip = Trip{}
-				tripCounter++
+				t2, _ := time.Parse(time.RFC3339, trace.Timestamp)
+				t1, _ := time.Parse(time.RFC3339, trip.Start)
+				diff := t2.Sub(t1)
+				if diff.Hours() < 3.0 {
+					// end this trip
+					trip.End = trace.Timestamp
+					trip.EndAt = endAt
+					trip.ID = fmt.Sprintf("%s__%d", tripPrefix, tripCounter)
+					trips = append(trips, trip)
+					trip = Trip{}
+					tripCounter++
+				} else {
+					// reset when trip is way too long, should be bad one
+					trip = Trip{}
+				}
 			}
 		}
 	}
